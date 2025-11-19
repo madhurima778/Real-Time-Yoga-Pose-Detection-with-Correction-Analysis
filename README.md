@@ -11,19 +11,21 @@ Dataset Link
 https://www.kaggle.com/datasets/niharika41298/yoga-poses-dataset
 
 Dataset structure
--TRAIN
-    -downdog/
-    -goddess/
-    -plank/
-    -tree/
-    -warrior2/
--TEST
-    -downdog/
-    -goddess/
-    -plank/
-    -tree/
-    -warrior2/
-
+-----------------
+- `DATASET/`
+   - `TRAIN/`
+      - `downdog/`
+      - `goddess/`
+      - `plank/`
+      - `tree/`
+      - `warrior2/`
+   - `TEST/`
+      - `downdog/`
+      - `goddess/`
+      - `plank/`
+      - `tree/`
+      - `warrior2/`
+     
 Features
 --------
 - Web UI served from `templates/index.html` to try pose classification with example inputs in `static/examples/`.
