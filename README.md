@@ -11,18 +11,18 @@ Dataset Link
 https://www.kaggle.com/datasets/niharika41298/yoga-poses-dataset
 
 Dataset structure
---TRAIN
-    downdog/
-    goddess/
-    plank/
-    tree/
-    warrior2/
---TEST
-    downdog/
-    goddess/
-    plank/
-    tree/
-    warrior2/
+-TRAIN
+    -downdog/
+    -goddess/
+    -plank/
+    -tree/
+    -warrior2/
+-TEST
+    -downdog/
+    -goddess/
+    -plank/
+    -tree/
+    -warrior2/
 
 Features
 --------
