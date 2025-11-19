@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Yoga Pose Trainer</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #eef2f7;
+      padding: 20px;
+    }
+
+    h2 {
+      text-align: center;
+      margin-bottom: 20px;
+      color: #222;
+    }
+
+    #layout {
+      display: flex;
+      justify-content: center;
+      gap: 40px;
+      flex-wrap: wrap;
+    }
+
+    /* LEFT PANEL */
+    #left {
+      width: 300px;
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+
+    select, button {
+      width: 100%;
+      padding: 10px;
+      font-size: 15px;
+      margin-top: 10px;
+      border-radius: 8px;
+      border: none;
+    }
+
+    button {
+      font-weight: bold;
+      background: #0078ff;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      background: #9aa0a6;
+    }
+
+    #exampleImg {
+      width: 100%;
+      border-radius: 10px;
+      margin-top: 10px;
+    }
+
+    /* RIGHT PANEL */
+    #right {
+      text-align: center;
+    }
+
+    #cameraWrapper {
+      position: relative;
+      width: 340px;
+      height: 260px;
+      padding: 10px;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      transition: border 0.3s ease-in-out;
+      border: 6px solid transparent;
+    }
+
+    #camera {
+      width: 320px;
+      height: 240px;
+      background: black;
+      border-radius: 10px;
+    }
+
+    #overlay {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      width: 320px;
+      height: 240px;
+      pointer-events: none;
+    }
+
+    /* Prediction + Feedback Box Below Camera */
+    #infoBox {
+      width: 340px;
+      margin-top: 10px;
+      padding: 12px;
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+
+    #prediction {
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 8px;
+      color: #222;
+    }
+
+    #feedback {
+      font-size: 16px;
+      color: #444;
+      white-space: pre-line;
+    }
+
+    /* Animated progress bar */
+    #progressContainer {
+      width: 100%;
+      height: 10px;
+      background: #d0d4da;
+      border-radius: 5px;
+      overflow: hidden;
+      margin-top: 10px;
+      display: none;
+    }
+
+    #progressBar {
+      height: 10px;
+      width: 0%;
+      background: #0078ff;
+      transition: width 0.2s ease-out;
+    }
+  </style>
+</head>
+<body>
+
+<h2>Yoga Pose Trainer</h2>
+
+<div id="layout">
+
+  <!-- LEFT: Pose Selector -->
+  <div id="left">
+    <label>Select Target Pose:</label>
+    <select id="poseSelect"></select>
+
+    <img id="exampleImg" src="" alt="example pose">
+
+    <button id="startBtn">Start Camera</button>
+    <button id="stopBtn" disabled>Stop Camera</button>
+  </div>
+
+  <!-- RIGHT: Camera + Predictions -->
+  <div id="right">
+
+    <!-- CAMERA + BORDER -->
+    <div id="cameraWrapper">
+      <video id="camera" autoplay muted playsinline></video>
+      <canvas id="overlay" width="320" height="240"></canvas>
+    </div>
+
+    <!-- Progress Bar -->
+    <div id="progressContainer">
+      <div id="progressBar"></div>
+    </div>
+
+    <!-- Prediction + Feedback -->
+    <div id="infoBox">
+      <div id="prediction">Prediction: --</div>
+      <div id="feedback">Feedback will appear here...</div>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<script>
+/* -----------------------------------------------------------
+   ELEMENTS
+----------------------------------------------------------- */
+const poseSelect = document.getElementById("poseSelect");
+const exampleImg = document.getElementById("exampleImg");
+
+const startBtn = document.getElementById("startBtn");
+const stopBtn = document.getElementById("stopBtn");
+
+const videoEl = document.getElementById("camera");
+const overlay = document.getElementById("overlay");
+const ctx = overlay.getContext("2d");
+
+const cameraWrapper = document.getElementById("cameraWrapper");
+const predictionBox = document.getElementById("prediction");
+const feedbackBox = document.getElementById("feedback");
+
+const progressContainer = document.getElementById("progressContainer");
+const progressBar = document.getElementById("progressBar");
+
+let poseInstance = null;
+let cameraFeed = null;
+let buffer = [];
+let processing = false;
+let stopped = false;
+
+const SEQ_LEN = 45;
+
+/* -----------------------------------------------------------
+   Load Example Images
+----------------------------------------------------------- */
+fetch("/api/templates")
+  .then(r => r.json())
+  .then(list => {
+    list.forEach(item => {
+      const opt = document.createElement("option");
+      opt.value = item.class;
+      opt.innerText = item.class;
+      poseSelect.appendChild(opt);
+    });
+    exampleImg.src = list[0].example;
+  });
+
+poseSelect.addEventListener("change", () => {
+  exampleImg.src = `/static/examples/${poseSelect.value}.png`;
+});
+
+/* -----------------------------------------------------------
+   START CAMERA
+----------------------------------------------------------- */
+startBtn.addEventListener("click", async () => {
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+
+  stopped = false;
+  buffer = [];
+  processing = false;
+
+  predictionBox.innerText = "Prediction: --";
+  feedbackBox.innerText = "Initializing model...";
+  cameraWrapper.style.borderColor = "transparent";
+
+  progressContainer.style.display = "block";
+  progressBar.style.width = "0%";
+
+  await initCameraAndPose();
+});
+
+/* -----------------------------------------------------------
+   STOP CAMERA
+----------------------------------------------------------- */
+stopBtn.addEventListener("click", () => {
+  stopped = true;
+  processing = false;
+  buffer = [];
+
+  if (cameraFeed) cameraFeed.stop();
+  poseInstance = null;
+  videoEl.srcObject = null;
+
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+
+  cameraWrapper.style.borderColor = "transparent";
+  progressContainer.style.display = "none";
+
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  feedbackBox.innerText = "Camera stopped.";
+});
+
+/* -----------------------------------------------------------
+   Initialize Camera + Pose
+----------------------------------------------------------- */
+async function initCameraAndPose() {
+
+  poseInstance = new Pose({
+    locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+  });
+
+  poseInstance.setOptions({
+    modelComplexity: 1,
+    smoothLandmarks: true,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+  });
+
+  poseInstance.onResults(onResults);
+  await poseInstance.initialize();
+
+  // Camera Access
+  await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } })
+    .then(stream => videoEl.srcObject = stream);
+
+  cameraFeed = new Camera(videoEl, {
+    width: 320,
+    height: 240,
+    onFrame: async () => {
+      if (!stopped) await poseInstance.send({ image: videoEl });
+    }
+  });
+
+  cameraFeed.start();
+  feedbackBox.innerText = "Camera started.";
+}
+
+/* -----------------------------------------------------------
+   Pose Processing
+----------------------------------------------------------- */
+async function onResults(results) {
+  if (stopped) return;
+
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+  if (!results.poseLandmarks) {
+    feedbackBox.innerText = "Pose not detected.";
+    return;
+  }
+
+  // Draw skeleton
+  drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS,
+    { color: "#00ff00", lineWidth: 3 });
+  drawLandmarks(ctx, results.poseLandmarks,
+    { color: "#ff0000", lineWidth: 2 });
+
+  const pts = results.poseLandmarks.flatMap(p => [p.x, p.y, p.z]);
+  if (pts.length !== 99) return;
+
+  buffer.push(pts);
+  if (buffer.length > SEQ_LEN) buffer.shift();
+
+  // Update animated progress bar
+  const progress = (buffer.length / SEQ_LEN) * 100;
+  progressBar.style.width = progress + "%";
+
+  if (buffer.length < SEQ_LEN) {
+    feedbackBox.innerText = `Collecting: ${buffer.length}/${SEQ_LEN}`;
+    return;
+  }
+
+  if (processing) return;
+  processing = true;
+
+  fetch("/api/predict", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      sequence: buffer,
+      target: poseSelect.value
+    })
+  })
+    .then(res => res.json())
+    .then(resp => {
+
+      predictionBox.innerText =
+        `Prediction: ${resp.predicted_class} (${(resp.predicted_score * 100).toFixed(1)}%)`;
+
+//---------------------------------------------------------
+// FINAL DECISION LOGIC WITH OR CONDITION
+//---------------------------------------------------------
+
+const correctClass = resp.predicted_class === poseSelect.value;
+const perfectScore = resp.predicted_score >= 0.999;   // ~100%
+const anglesOK = resp.feedback.length === 0;
+
+// ---- GREEN CONDITION ----
+// (Condition 1 AND 2) OR (Condition 1 AND 3)
+if ((correctClass && perfectScore) || (correctClass && anglesOK)) {
+
+    cameraWrapper.style.borderColor = "#28a745"; // GREEN
+
+    if (perfectScore && anglesOK) {
+        feedbackBox.innerText = "Perfect! Pose is accurate.";
+    } else if (perfectScore) {
+        feedbackBox.innerText = "Correct pose with high confidence!";
+    } else {
+        feedbackBox.innerText = "Correct pose — angles look aligned!";
+    }
+
+}
+// ---- RED CONDITION ----
+else {
+
+    cameraWrapper.style.borderColor = "#ff4d4d"; // RED
+
+    let msg = "";
+
+    if (!correctClass) {
+        msg += `Wrong pose!\nYou are doing: ${resp.predicted_class}\nTarget: ${poseSelect.value}\n`;
+    }
+
+    if (!perfectScore) {
+        msg += `\nConfidence: ${(resp.predicted_score * 100).toFixed(1)}%`;
+    }
+
+    if (resp.feedback.length > 0) {
+        msg += "\n\nAngle adjustments:\n" +
+               resp.feedback.map(f => "- " + f.message).join("\n");
+    }
+
+    feedbackBox.innerText = msg;
+}
+
+    })
+    .finally(() => {
+      processing = false;
+    });
+}
+
+</script>
+
+</body>
+</html>
